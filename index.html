@@ -1,0 +1,142 @@
+<style>
+.mode-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:13px;font-weight:500;transition:all .2s}
+.zone-bar{height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;transition:all .3s;flex-shrink:0}
+.slider-row{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.slider-label{font-size:13px;color:var(--color-text-secondary);width:60px}
+.slider-val{font-size:14px;font-weight:500;min-width:48px;text-align:right;color:var(--color-text-primary)}
+</style>
+
+<h2 class="sr-only">Buck-Boost 工作模式交互演示</h2>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+
+<div>
+<div class="slider-row">
+<span class="slider-label">Vin</span>
+<input type="range" id="vin" min="5" max="35" value="12" step="0.5" style="flex:1">
+<span class="slider-val" id="vin-val">12.0 V</span>
+</div>
+<div class="slider-row">
+<span class="slider-label">Vout 设定</span>
+<input type="range" id="vout" min="1" max="40" value="5" step="0.5" style="flex:1">
+<span class="slider-val" id="vout-val">5.0 V</span>
+</div>
+</div>
+
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+<div style="font-size:12px;color:var(--color-text-secondary)">当前工作模式</div>
+<div id="mode-badge" class="mode-badge" style="font-size:18px;padding:8px 24px">Buck</div>
+<div id="ratio-text" style="font-size:12px;color:var(--color-text-secondary)">Vout/Vin = 0.42</div>
+</div>
+</div>
+
+<div style="margin-bottom:8px;font-size:12px;color:var(--color-text-secondary)">Vout/Vin 比值轴（以当前 Vin 为基准）</div>
+<div style="position:relative;height:60px;margin-bottom:6px">
+<div style="display:flex;height:28px;border-radius:6px;overflow:hidden;border:0.5px solid var(--color-border-tertiary)">
+<div class="zone-bar" id="zone-buck" style="background:#E6F1FB;color:#185FA5;width:80%">Buck</div>
+<div class="zone-bar" id="zone-mix" style="background:#EEEDFE;color:#534AB7;width:37%">Mix</div>
+<div class="zone-bar" id="zone-boost" style="background:#FAECE7;color:#993C1D;width:83%">Boost</div>
+</div>
+<div id="needle" style="position:absolute;top:0;width:2px;height:36px;background:var(--color-text-primary);border-radius:1px;transition:left .2s;opacity:0.7"></div>
+<div id="needle-label" style="position:absolute;top:38px;font-size:11px;color:var(--color-text-secondary);transform:translateX(-50%);white-space:nowrap"></div>
+</div>
+
+<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--color-text-tertiary);margin-bottom:20px">
+<span id="lb-0">0×Vin</span>
+<span id="lb-08" style="position:relative">0.80×</span>
+<span id="lb-085">0.85×</span>
+<span id="lb-1">1.00×</span>
+<span id="lb-115">1.15×</span>
+<span id="lb-12">1.20×</span>
+<span id="lb-end">1.5×Vin</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px">
+<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:4px">Buck PWM</div>
+<div id="buck-pwm" style="font-size:16px;font-weight:500;color:var(--color-text-primary)">PID 控制</div>
+<div id="buck-sub" style="font-size:11px;color:var(--color-text-secondary)">0~94% 可变</div>
+</div>
+<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px">
+<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:4px">Boost PWM</div>
+<div id="boost-pwm" style="font-size:16px;font-weight:500;color:var(--color-text-primary)">固定 6%</div>
+<div id="boost-sub" style="font-size:11px;color:var(--color-text-secondary)">Boost 上管 94%</div>
+</div>
+<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px">
+<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:4px">切换复位</div>
+<div id="reset-status" style="font-size:16px;font-weight:500;color:var(--color-text-primary)">不复位</div>
+<div style="font-size:11px;color:var(--color-text-secondary)">BBModeChange 标志</div>
+</div>
+</div>
+
+<script>
+const vin=document.getElementById('vin');
+const vout=document.getElementById('vout');
+const vinVal=document.getElementById('vin-val');
+const voutVal=document.getElementById('vout-val');
+const modeBadge=document.getElementById('mode-badge');
+const ratioText=document.getElementById('ratio-text');
+const needle=document.getElementById('needle');
+const needleLabel=document.getElementById('needle-label');
+const buckPwm=document.getElementById('buck-pwm');
+const buckSub=document.getElementById('buck-sub');
+const boostPwm=document.getElementById('boost-pwm');
+const boostSub=document.getElementById('boost-sub');
+const resetStatus=document.getElementById('reset-status');
+const zoneBuck=document.getElementById('zone-buck');
+const zoneMix=document.getElementById('zone-mix');
+const zoneBoost=document.getElementById('zone-boost');
+
+let prevMode='';
+
+function update(){
+  const vi=parseFloat(vin.value);
+  const vo=parseFloat(vout.value);
+  vinVal.textContent=vi.toFixed(1)+' V';
+  voutVal.textContent=vo.toFixed(1)+' V';
+  const ratio=vo/vi;
+  ratioText.textContent='Vout/Vin = '+ratio.toFixed(3)+'  ('+vo.toFixed(1)+'V ÷ '+vi.toFixed(1)+'V)';
+
+  const MIN=0, MAX=1.5;
+  const pct=(ratio-MIN)/(MAX-MIN);
+  const barW=document.querySelector('div[style*="display:flex;height:28px"]').offsetWidth||600;
+  const needleLeft=Math.max(1,Math.min(barW-3,pct*barW));
+  needle.style.left=needleLeft+'px';
+  needleLabel.style.left=needleLeft+'px';
+  needleLabel.textContent=ratio.toFixed(2)+'×';
+
+  const b08pct=0.80/MAX, b085pct=0.85/MAX, b115pct=1.15/MAX, b12pct=1.20/MAX;
+  zoneBuck.style.width=(b085pct*100)+'%';
+  zoneMix.style.width=((b12pct-b08pct)*100)+'%';
+  zoneBoost.style.width=((MAX-b115pct)/MAX*100)+'%';
+
+  let mode,color,bg;
+  if(ratio<0.80){mode='Buck';color='#185FA5';bg='#E6F1FB';}
+  else if(ratio>1.20){mode='Boost';color='#993C1D';bg='#FAECE7';}
+  else{mode='Mix';color='#534AB7';bg='#EEEDFE';}
+
+  modeBadge.textContent=mode;
+  modeBadge.style.background=bg;
+  modeBadge.style.color=color;
+
+  const changed=prevMode!==''&&prevMode!==mode;
+  resetStatus.textContent=changed?'复位 PID':'不复位';
+  resetStatus.style.color=changed?'var(--color-text-danger)':'var(--color-text-primary)';
+  prevMode=mode;
+
+  if(mode==='Buck'){
+    buckPwm.textContent='PID 控制';buckSub.textContent='0 ~ 94% 可变';
+    boostPwm.textContent='固定 6%';boostSub.textContent='(上管 94%，下管 6%)';
+  }else if(mode==='Boost'){
+    buckPwm.textContent='固定 94%';buckSub.textContent='(上管满占空比)';
+    boostPwm.textContent='PID 控制';boostSub.textContent='0 ~ 65% 可变';
+  }else{
+    buckPwm.textContent='固定 80%';buckSub.textContent='(MIX 固定值)';
+    boostPwm.textContent='PID 控制';boostSub.textContent='0 ~ 65% 可变';
+  }
+}
+
+vin.addEventListener('input',update);
+vout.addEventListener('input',update);
+update();
+</script>
